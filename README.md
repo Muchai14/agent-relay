@@ -121,3 +121,36 @@ Set `RELAY_TEST_BASE_URL` to the published API URL to reuse this test with
 Docker, Compose, or a Kubernetes port forward. If enrollment is protected,
 also set `RELAY_TEST_ENROLLMENT_SECRET`. Without `RELAY_TEST_BASE_URL`, this
 test is skipped so the starter tests can run without a server.
+
+## Docker (homework question 3)
+
+With Docker running, build and launch from the repository directory:
+
+```bash
+docker build -t agent-relay:local .
+docker run -d --name agent-relay-local -p 127.0.0.1:8001:8000 \
+  -v agent-relay-data:/data agent-relay:local
+```
+
+Open http://127.0.0.1:8001/ for the container dashboard. Host port 8001
+leaves the original local server on 8000 available. The `-p` option publishes
+container port 8000; `EXPOSE` alone does not publish it. The named volume
+preserves the container's SQLite database when the container is replaced.
+This is a separate database, so existing local-server tokens do not work here.
+
+Verify the same protocol against the container:
+
+```bash
+RELAY_TEST_BASE_URL=http://127.0.0.1:8001 uv run pytest -q test_live_api.py
+```
+
+To run the example worker against it:
+
+```bash
+uv run python main.py worker --base-url http://127.0.0.1:8001 \
+  --name uppercase --credentials ./docker-uppercase-credentials.json \
+  --worker-id docker-demo-worker
+```
+
+Use `docker logs agent-relay-local` to inspect logs and
+`docker stop agent-relay-local` to stop the container.
