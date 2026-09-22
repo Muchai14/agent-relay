@@ -100,3 +100,24 @@ running tests against another database.
 This starter intentionally does not include Docker, Kubernetes, CI, external
 brokers, an LLM, or a PostgreSQL implementation. Those are deployment and
 student-port concerns rather than part of the local relay protocol.
+
+## Live API integration test (homework question 2)
+
+Start the API as described above, then run in a second terminal:
+
+```bash
+RELAY_TEST_BASE_URL=http://127.0.0.1:8000 uv run pytest -q test_live_api.py
+```
+
+This test registers two unique agents and exercises queued → processing →
+completed through real HTTP requests and the server's database. The test acts
+as the recipient, claims the task, and submits the uppercase result; a separate
+worker is not required. It verifies the sender can read the result and delivery
+history. It never resets the server database. Each run leaves two test agents
+and one task in the database; their credentials are kept only in test memory.
+Your existing dashboard identity still shows its own tasks.
+
+Set `RELAY_TEST_BASE_URL` to the published API URL to reuse this test with
+Docker, Compose, or a Kubernetes port forward. If enrollment is protected,
+also set `RELAY_TEST_ENROLLMENT_SECRET`. Without `RELAY_TEST_BASE_URL`, this
+test is skipped so the starter tests can run without a server.
