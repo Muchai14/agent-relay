@@ -10,4 +10,6 @@ __pycache__
 *-credentials.json
 .env
 .env.*
+.secrets
+.vars
 test_*.py

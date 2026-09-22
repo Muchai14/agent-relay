@@ -6,3 +6,7 @@
 __pycache__/
 .pytest_cache/
 *-credentials.json
+.env
+.env.*
+.secrets
+.vars

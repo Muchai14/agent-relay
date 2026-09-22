@@ -98,8 +98,8 @@ the dev server first or set `RELAY_DATABASE_URL` to a scratch file before
 running tests against another database.
 
 This fork adds Docker and PostgreSQL/Compose support to the SQLite starter.
-It also includes local Kubernetes manifests. CI is the subsequent homework
-step. No external broker or LLM is needed.
+It also includes local Kubernetes manifests and a tested CI/CD workflow.
+No external broker or LLM is needed.
 
 ## Live API integration test (homework question 2)
 
@@ -238,3 +238,45 @@ this repository directory, first run:
 export PATH="$PWD/../bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
 export KUBECONFIG="$PWD/../kind-kubeconfig"
 ```
+
+## CI/CD with act (homework question 6)
+
+The workflow in `.github/workflows/ci.yml` runs these steps in order:
+
+1. Install dependencies from the frozen uv lockfile.
+2. Start disposable PostgreSQL and run protocol/concurrency tests.
+3. Start a real API against a separate test database and run the HTTP integration test.
+4. Build an image tagged with the Git revision and a random suffix.
+5. Under local `act`, load the image into kind, apply manifests with the new
+   image tag, and wait for the rollout to complete.
+
+If a test fails, later build/deploy steps do not run. The existing application
+keeps running. Temporary API and PostgreSQL processes are cleaned up on both
+success and failure. The running application's database is never used for CI tests.
+
+Prerequisites: Docker, uv, kind, kubectl, and act. For the guided local workspace:
+
+```bash
+bash scripts/run-local-ci.sh
+```
+
+The wrapper uses act's host runner mode (`-P ubuntu-latest=-self-hosted`),
+which runs shell steps directly on the Mac and connects to Docker Desktop.
+It passes the local Docker socket/configuration and kind kubeconfig to the
+workflow. It stores tools' caches outside the repository. The deployment
+explicitly targets context `kind-agent-relay`, namespace `agent-relay`.
+It does not need a registry push or a GitHub token to run locally.
+
+On GitHub-hosted runners, push/PR runs test and build; local kind deployment
+is skipped because that runner cannot access your Mac's cluster.
+
+The dashboard heading is now **Agent Relay v2**. After each successful rollout,
+restart port forwarding if the previous pod's termination closed it:
+
+```bash
+kubectl --context kind-agent-relay -n agent-relay port-forward service/agent-relay 8003:8000
+```
+
+Open http://127.0.0.1:8003/ and refresh. Existing Kubernetes agent tokens and
+task data still work. For updates, change the source and rerun the wrapper;
+each run builds and deploys a unique image tag.
