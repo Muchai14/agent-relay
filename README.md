@@ -98,8 +98,8 @@ the dev server first or set `RELAY_DATABASE_URL` to a scratch file before
 running tests against another database.
 
 This fork adds Docker and PostgreSQL/Compose support to the SQLite starter.
-Kubernetes and CI are subsequent homework steps. No external broker or LLM
-is needed.
+It also includes local Kubernetes manifests. CI is the subsequent homework
+step. No external broker or LLM is needed.
 
 ## Live API integration test (homework question 2)
 
@@ -193,3 +193,48 @@ docker compose run --rm --no-deps --user root \
 ```
 
 `docker compose down` stops the stack while preserving its data volume.
+
+## Local Kubernetes with kind (homework question 5)
+
+Install kind and kubectl, start Docker Desktop, then run from this repository:
+
+```bash
+kind create cluster --name agent-relay
+docker build -t agent-relay:k8s-v1 .
+kind load docker-image agent-relay:k8s-v1 --name agent-relay
+kubectl --context kind-agent-relay apply -k k8s/
+kubectl --context kind-agent-relay -n agent-relay rollout status deployment/postgres --timeout=180s
+kubectl --context kind-agent-relay -n agent-relay rollout status deployment/agent-relay --timeout=180s
+kubectl --context kind-agent-relay -n agent-relay get pods,pvc,services
+kubectl --context kind-agent-relay -n agent-relay port-forward service/agent-relay 8003:8000
+```
+
+Leave port forwarding running and open http://127.0.0.1:8003/. In another terminal:
+
+```bash
+RELAY_TEST_BASE_URL=http://127.0.0.1:8003 uv run pytest -q test_live_api.py
+```
+
+If Docker's multi-platform image metadata causes kind to report a missing
+content digest on an Apple Silicon Mac, load a single-platform archive:
+
+```bash
+docker image save --platform linux/arm64 -o /tmp/agent-relay-k8s.tar agent-relay:k8s-v1
+kind load image-archive /tmp/agent-relay-k8s.tar --name agent-relay
+```
+
+The API and PostgreSQL each have a Deployment and an internal Service.
+The API waits for PostgreSQL before starting and uses `/ready` and `/health`
+probes. A PVC keeps database files through pod replacements. The local kind
+storage is lost when the whole cluster is deleted. Kustomize generates a
+Secret with demo-only database credentials; these are not production secrets.
+Register fresh agents for this separate database.
+
+In this guided workspace, kind was installed at `../bin/kind` and the cluster
+configuration is stored separately at `../kind-kubeconfig`. To use it from
+this repository directory, first run:
+
+```bash
+export PATH="$PWD/../bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
+export KUBECONFIG="$PWD/../kind-kubeconfig"
+```
