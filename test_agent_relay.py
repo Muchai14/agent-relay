@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 import main
 from database import Attempt, Base, Task, as_db_time, db_session, engine, utcnow
 from storage import claim_one
+from storage import commit_terminal, create_task, register_agent
 
 
 @pytest.fixture(autouse=True)
@@ -98,7 +99,7 @@ def test_protocol_idempotency_terminal_retry_and_auth_boundary():
         assert "claim_token" not in attempts["items"][0]
 
 
-def test_sqlite_atomic_claims_distribute_without_overlap():
+def test_atomic_claims_distribute_without_overlap():
     with TestClient(main.app) as client:
         _sender, sender_headers = register(client, "sender")
         recipient, _recipient_headers = register(client, "recipient")
@@ -160,3 +161,28 @@ def test_dashboard_is_asset_and_invalid_input_is_documented_error():
         missing_name = client.post("/api/v1/agents", json={})
         assert missing_name.status_code == 400
         assert missing_name.json()["error"]["code"] == "invalid_input"
+
+
+def test_concurrent_idempotent_creation_and_completion():
+    sender = register_agent("race-sender", None)
+    recipient = register_agent("race-recipient", None)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        tasks = list(pool.map(
+            lambda _: create_task(sender["agent_id"], recipient["agent_id"], "race", "same-key"),
+            range(8),
+        ))
+    assert len({task["task_id"] for task in tasks}) == 1
+    claim = claim_one(recipient["agent_id"], "race-worker")
+    assert claim is not None
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(
+            lambda _: commit_terminal(
+                claim["task_id"], recipient["agent_id"], claim["claim_token"],
+                action="complete", value="RACE",
+            ),
+            range(8),
+        ))
+    assert all(result["status"] == "completed" for result in results)
+    with db_session() as db:
+        assert db.query(Task).count() == 1
+        assert db.query(Attempt).count() == 1

@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD: relay-local-only
+      POSTGRES_DB: relay
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay -d relay"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  api:
+    build: .
+    image: agent-relay:compose
+    environment:
+      RELAY_DATABASE_URL: postgresql+psycopg://relay:relay-local-only@postgres:5432/relay
+    ports:
+      - "127.0.0.1:8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+volumes:
+  postgres-data:

@@ -1,4 +1,4 @@
-# Agent Relay (SQLite starter)
+# Agent Relay
 
 Agent Relay is a small FastAPI service for registering agents, delivering one
 task at a time, and recording results. The local starter is self-contained:
@@ -97,9 +97,9 @@ recreates all tables on whatever `RELAY_DATABASE_URL` points at, so stop
 the dev server first or set `RELAY_DATABASE_URL` to a scratch file before
 running tests against another database.
 
-This starter intentionally does not include Docker, Kubernetes, CI, external
-brokers, an LLM, or a PostgreSQL implementation. Those are deployment and
-student-port concerns rather than part of the local relay protocol.
+This fork adds Docker and PostgreSQL/Compose support to the SQLite starter.
+Kubernetes and CI are subsequent homework steps. No external broker or LLM
+is needed.
 
 ## Live API integration test (homework question 2)
 
@@ -154,3 +154,42 @@ uv run python main.py worker --base-url http://127.0.0.1:8001 \
 
 Use `docker logs agent-relay-local` to inspect logs and
 `docker stop agent-relay-local` to stop the container.
+
+
+## Docker Compose and PostgreSQL (homework question 4)
+
+```bash
+docker compose up --build -d --wait
+RELAY_TEST_BASE_URL=http://127.0.0.1:8002 uv run pytest -q test_live_api.py
+```
+
+Open http://127.0.0.1:8002/. Compose starts `api` and `postgres` and waits for
+database readiness. The API connects to hostname **postgres**, the Compose
+service name. PostgreSQL has a named volume and no published host port.
+The example database password is for this local learning stack only.
+Each deployment has its own agent registrations and tokens.
+
+Verify stored task results directly in PostgreSQL:
+
+```bash
+docker compose exec postgres psql -U relay -d relay -c 'SELECT input, status, output FROM tasks;'
+```
+
+The protocol tests reset their database. Run them against a separate test DB,
+never against the `relay` database used by the running API. Create it once:
+
+```bash
+docker compose exec postgres createdb -U relay relay_test
+```
+
+Run the protocol/concurrency tests in a temporary container on the Compose network:
+
+```bash
+docker compose run --rm --no-deps --user root \
+  -v "$PWD:/tests:ro" -w /tests \
+  -e UV_PROJECT_ENVIRONMENT=/tmp/test-venv \
+  -e RELAY_DATABASE_URL=postgresql+psycopg://relay:relay-local-only@postgres:5432/relay_test \
+  api uv run --frozen pytest -q -p no:cacheprovider test_agent_relay.py
+```
+
+`docker compose down` stops the stack while preserving its data volume.

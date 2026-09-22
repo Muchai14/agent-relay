@@ -1,10 +1,4 @@
-"""SQLite database setup and durable Agent Relay models.
-
-This module is intentionally the only place that knows about SQLite connection
-pragmas and its writer-lock transaction.  The rest of the application talks to
-the models through :mod:`storage`; replacing this module with a PostgreSQL
-engine and a row-locking claim transaction is the planned student exercise.
-"""
+"""Shared models with SQLite writer transactions and PostgreSQL row locks."""
 
 from __future__ import annotations
 
@@ -177,14 +171,14 @@ def db_session() -> Generator[Session, None, None]:
 
 @contextmanager
 def immediate_transaction() -> Generator[Session, None, None]:
-    """Run one SQLite writer transaction before selecting or changing work.
+    """Use SQLite's writer reservation or a PostgreSQL transaction.
 
-    SQLite does not support PostgreSQL's ``FOR UPDATE SKIP LOCKED``.  A
-    ``BEGIN IMMEDIATE`` writer reservation serializes claims (and recovery or
-    terminal submissions) across API processes, giving each task one active
-    lease.  This is the intentionally isolated seam for a future PostgreSQL
-    implementation.
+    PostgreSQL callers lock task rows explicitly, always before attempt rows.
     """
+    if engine.dialect.name != "sqlite":
+        with db_session() as db:
+            yield db
+        return
 
     connection = engine.connect()
     session = Session(bind=connection, expire_on_commit=False, autoflush=True)
@@ -205,17 +199,26 @@ def recover_expired_in_session(db: Session, now: datetime) -> int:
     """Expire active leases and requeue/fail their tasks within ``db``."""
 
     now_db = as_db_time(now)
-    expired = list(
-        db.scalars(
-            select(Attempt)
-            .where(Attempt.outcome == "processing", Attempt.lease_expires_at <= now_db)
-            .order_by(Attempt.lease_expires_at, Attempt.id)
-        )
-    )
+    # Lock tasks first, like heartbeat and completion. SKIP LOCKED allows
+    # multiple recovery/claim workers to make progress without deadlocks.
+    tasks = list(db.scalars(
+        select(Task)
+        .where(Task.status == "processing", Task.id.in_(
+            select(Attempt.task_id).where(
+                Attempt.outcome == "processing", Attempt.lease_expires_at <= now_db
+            )
+        ))
+        .order_by(Task.id)
+        .with_for_update(skip_locked=True)
+    ))
     count = 0
-    for attempt in expired:
-        task = db.get(Task, attempt.task_id)
-        if task is None or attempt.outcome != "processing":
+    for task in tasks:
+        attempt = db.scalar(select(Attempt).where(
+            Attempt.task_id == task.id,
+            Attempt.outcome == "processing",
+            Attempt.lease_expires_at <= now_db,
+        ))
+        if attempt is None:
             continue
         attempt.outcome = "expired"
         attempt.finished_at = now_db
